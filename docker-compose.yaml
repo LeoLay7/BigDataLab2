@@ -1,0 +1,168 @@
+version: '3.8'
+
+services:
+  # ==================== PostgreSQL (источник + DWH) ====================
+  postgres:
+    image: postgres:16
+    container_name: postgres-bigdata
+    command: ["postgres", "-p", "5555"]
+    environment:
+      POSTGRES_USER: student
+      POSTGRES_PASSWORD: student
+      POSTGRES_DB: lab2
+    ports:
+      - "5555:5555"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./исходные данные:/csv:ro
+    networks:
+      - bigdata-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U student -d lab2 -p 5555"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ==================== Spark Master + Jupyter (Python) ====================
+  spark-master:
+    build:
+      context: ./spark-module
+      dockerfile: Dockerfile
+    image: spark-module:1.0-snapshot
+    container_name: spark-master
+    ports:
+      - "8888:8888"    # Jupyter Notebook
+      - "4040:4040"    # Spark UI
+      - "7077:7077"    # Spark Master port
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - GRANT_SUDO=yes
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5555
+      - POSTGRES_DB=lab2
+      - POSTGRES_USER=student
+      - POSTGRES_PASSWORD=student
+      - CLICKHOUSE_HOST=clickhouse
+      - CLICKHOUSE_PORT=8123
+
+    volumes:
+      - ./исходные данные:/data:ro
+    networks:
+      - bigdata-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      cassandra:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    restart: unless-stopped
+    command: spark-submit --master local[*] --class org.homework.Main /home/jovyan/work/spark-module-1.0-SNAPSHOT.jar
+
+  # ==================== ClickHouse (обязательно для отчетов) ====================
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    container_name: clickhouse-bigdata
+    ports:
+      - "8123:8123"    # HTTP interface
+      - "9000:9000"    # Native protocol
+    environment:
+      - CLICKHOUSE_DB=reports
+      - CLICKHOUSE_USER=student
+      - CLICKHOUSE_PASSWORD=student
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    networks:
+      - bigdata-net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ==================== Cassandra (опционально) ====================
+  cassandra:
+    image: cassandra:4.1
+    container_name: cassandra-bigdata
+    ports:
+      - "9042:9042"
+    environment:
+      - CASSANDRA_USER=student
+      - CASSANDRA_PASSWORD=student
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    networks:
+      - bigdata-net
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'DESCRIBE KEYSPACES' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  # ==================== Neo4j (опционально) ====================
+  # neo4j:
+  #   image: neo4j:5.17
+  #   container_name: neo4j-bigdata
+  #   ports:
+  #     - "7474:7474"   # HTTP
+  #     - "7687:7687"   # Bolt
+  #   environment:
+  #     - NEO4J_AUTH=student/student
+  #     - NEO4J_PLUGINS=["apoc"]
+  #   volumes:
+  #     - neo4j_data:/data
+  #   networks:
+  #     - bigdata-net
+  #   restart: unless-stopped
+
+  # ==================== MongoDB (опционально) ====================
+  mongodb:
+    image: mongo:7.0
+    container_name: mongodb-bigdata
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=student
+      - MONGO_INITDB_ROOT_PASSWORD=student
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - bigdata-net
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # ==================== Valkey / Redis (опционально) ====================
+  # valkey:
+  #   image: valkey/valkey:7.2
+  #   container_name: valkey-bigdata
+  #   ports:
+  #     - "6379:6379"
+  #   command: ["valkey-server", "--requirepass", "student"]
+  #   volumes:
+  #     - valkey_data:/data
+  #   networks:
+  #     - bigdata-net
+  #   restart: unless-stopped
+
+networks:
+  bigdata-net:
+    driver: bridge
+
+volumes:
+  pgdata:
+  clickhouse_data:
+  cassandra_data:
+  # neo4j_data:
+  mongodb_data:
+  # valkey_data:

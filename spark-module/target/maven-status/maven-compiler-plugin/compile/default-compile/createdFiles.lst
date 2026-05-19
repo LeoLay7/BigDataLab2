@@ -1,0 +1,8 @@
+org\homework\DataSourceService.class
+org\homework\MongoDbService.class
+org\homework\SnowflakeTransformer.class
+org\homework\ReportService.class
+org\homework\CassandraService.class
+org\homework\ClickHouseService.class
+org\homework\Main.class
+org\homework\ReportSink.class
