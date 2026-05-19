@@ -85,3 +85,136 @@
 7. Код Apache Spark трансформации данных из снежинки/звезды в отчеты в Neo4j.
 8. Код Apache Spark трансформации данных из снежинки/звезды в отчеты в MongoDB.
 9. Код Apache Spark трансформации данных из снежинки/звезды в отчеты в Valkey.
+
+# Инструкция по запуску проекта
+
+## Запуск проекта:
+
+1. **Запустите Docker Compose со сборкой образа Spark-модуля**:
+   ```bash
+   docker-compose up --build -d
+   ```
+
+2. **Проверьте статус сервисов**:
+   ```bash
+   docker-compose ps
+   ```
+
+## Доступ к сервисам:
+
+- **PostgreSQL**: `localhost:5555` (пользователь: `student`, пароль: `student`, БД: `lab2`)
+- **ClickHouse**: `localhost:8123` (пользователь: `student`, пароль: `student`, БД: `reports`)
+- **Spark UI**: `localhost:4040`
+- **Jupyter Notebook**: `localhost:8888`
+- **Cassandra**: `localhost:9042`
+- **MongoDB**: `localhost:27017`
+
+## Проверка работы:
+
+1. Spark автоматически запустит ETL пайплайн при старте контейнера
+2. Подключитесь к ClickHouse и проверьте созданные таблицы отчетов
+3. Подключитесь к PostgreSQL и проверьте модель снежинки
+4. Подключитель к Cassandra и MongoDB и проверьте наличие данных в отчетах
+
+## Проверка результатов:
+
+### 1) Проверить снежинку в PostgreSQL (источник витрин)
+
+Подключение в контейнер PostgreSQL:
+
+```powershell
+docker-compose exec postgres psql -U student -d lab2 -p 5555
+```
+
+Проверки в `psql`:
+
+```sql
+SELECT COUNT(*) AS mock_data_rows FROM mock_data;
+
+SELECT COUNT(*) AS dim_country_rows FROM dim_country;
+SELECT COUNT(*) AS dim_city_rows FROM dim_city;
+SELECT COUNT(*) AS dim_location_rows FROM dim_location;
+SELECT COUNT(*) AS dim_customer_rows FROM dim_customer;
+SELECT COUNT(*) AS dim_seller_rows FROM dim_seller;
+SELECT COUNT(*) AS dim_store_rows FROM dim_store;
+SELECT COUNT(*) AS dim_supplier_rows FROM dim_supplier;
+SELECT COUNT(*) AS dim_product_rows FROM dim_product;
+SELECT COUNT(*) AS fact_sales_rows FROM fact_sales;
+
+SELECT COUNT(*) AS broken_fk_rows
+FROM fact_sales f
+LEFT JOIN dim_date d ON d.date_id = f.date_id
+LEFT JOIN dim_customer c ON c.customer_id = f.customer_id
+LEFT JOIN dim_seller s ON s.seller_id = f.seller_id
+LEFT JOIN dim_product p ON p.product_id = f.product_id
+LEFT JOIN dim_store st ON st.store_id = f.store_id
+LEFT JOIN dim_supplier sp ON sp.supplier_id = f.supplier_id
+WHERE d.date_id IS NULL
+   OR c.customer_id IS NULL
+   OR s.seller_id IS NULL
+   OR p.product_id IS NULL
+   OR st.store_id IS NULL
+   OR sp.supplier_id IS NULL;
+```
+
+Ожидаемо:
+- `mock_data_rows = 10000`.
+- `fact_sales_rows` близко к числу исходных строк (допустимы отличия при дедупликации в измерениях).
+- `broken_fk_rows = 0`.
+
+### 2) Проверить витрины в ClickHouse
+
+Подключение в контейнер ClickHouse:
+
+```powershell
+docker-compose exec clickhouse clickhouse-client --user student --password student --database reports
+```
+
+Проверки в `clickhouse-client`:
+
+```sql
+SHOW TABLES;
+
+SELECT count() FROM report_product_sales;
+SELECT count() FROM report_customer_sales;
+SELECT count() FROM report_time_sales;
+SELECT count() FROM report_store_sales;
+SELECT count() FROM report_supplier_sales;
+SELECT count() FROM report_product_quality;
+
+SELECT * FROM report_product_sales ORDER BY total_quantity_sold DESC LIMIT 10;
+SELECT * FROM report_customer_sales ORDER BY total_spent DESC LIMIT 10;
+SELECT * FROM report_time_sales ORDER BY year, month LIMIT 24;
+SELECT * FROM report_store_sales ORDER BY total_revenue DESC LIMIT 10;
+SELECT * FROM report_supplier_sales ORDER BY total_revenue DESC LIMIT 10;
+SELECT * FROM report_product_quality ORDER BY rating DESC, total_sold DESC LIMIT 10;
+```
+
+Ожидаемо:
+- Есть все 6 таблиц `report_*`.
+- Во всех таблицах количество строк > 0.
+- Ранги (`sales_rank`, `spending_rank`, `revenue_rank`) выглядят монотонно по сортировке.
+
+### 3) Проверить витрины в Cassandra
+
+```powershell
+docker-compose exec cassandra cqlsh -e "DESCRIBE KEYSPACE reports"
+docker-compose exec cassandra cqlsh -e "SELECT COUNT(*) FROM reports.report_product_sales;"
+docker-compose exec cassandra cqlsh -e "SELECT COUNT(*) FROM reports.report_customer_sales;"
+docker-compose exec cassandra cqlsh -e "SELECT COUNT(*) FROM reports.report_time_sales;"
+docker-compose exec cassandra cqlsh -e "SELECT COUNT(*) FROM reports.report_store_sales;"
+docker-compose exec cassandra cqlsh -e "SELECT COUNT(*) FROM reports.report_supplier_sales;"
+docker-compose exec cassandra cqlsh -e "SELECT COUNT(*) FROM reports.report_product_quality;"
+```
+
+### 4) Проверить витрины в MongoDB
+
+```powershell
+docker-compose exec mongodb mongosh "mongodb://student:student@localhost:27017/reports?authSource=admin" --eval "db.getCollectionNames()"
+docker-compose exec mongodb mongosh "mongodb://student:student@localhost:27017/reports?authSource=admin" --eval "db.report_product_sales.countDocuments()"
+docker-compose exec mongodb mongosh "mongodb://student:student@localhost:27017/reports?authSource=admin" --eval "db.report_customer_sales.countDocuments()"
+docker-compose exec mongodb mongosh "mongodb://student:student@localhost:27017/reports?authSource=admin" --eval "db.report_time_sales.countDocuments()"
+docker-compose exec mongodb mongosh "mongodb://student:student@localhost:27017/reports?authSource=admin" --eval "db.report_store_sales.countDocuments()"
+docker-compose exec mongodb mongosh "mongodb://student:student@localhost:27017/reports?authSource=admin" --eval "db.report_supplier_sales.countDocuments()"
+docker-compose exec mongodb mongosh "mongodb://student:student@localhost:27017/reports?authSource=admin" --eval "db.report_product_quality.countDocuments()"
+```
